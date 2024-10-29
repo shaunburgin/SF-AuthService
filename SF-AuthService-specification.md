@@ -21,15 +21,38 @@ The StudioFlow Auth Service leverages Google Cloud Platform (GCP) services to pr
 
 ### **Core Components**
 
-1. **Identity Platform**: Centralized authentication provider that handles user authentication and issues JWTs. Each JWT includes user information and `customer_id` for data access control across modules.
-2. **Cloud Functions**: Stateless, serverless functions handle custom authentication logic, including token validation and user management, allowing secure and cost-effective compute.
-3. **Firestore**: Stores user metadata such as `customer_id`, roles, and permissions, enabling easy lookup for access control and auditing.
+1. **Roles and Responsibilities**:
+   - **Identity Platform**:
+     - Handles primary user authentication (e.g., verifying credentials like username and password).
+     - Issues initial access tokens after successful authentication.
+     - Maintains user profiles and custom claims used by the Auth Service.
+   - **Auth Service**:
+     - Manages token validation, refresh, and revocation.
+     - Applies custom logic for access control and token lifecycle, including checking Firestore for revoked tokens.
+     - Issues new refresh tokens and manages token rotation.
+2. **Identity Platform**: Centralized authentication provider that handles user authentication and issues JWTs. Each JWT includes user information and `customer_id` for data access control across modules
+3. **Cloud Functions**: Stateless, serverless functions handle custom authentication logic, including token validation and user management, allowing secure and cost-effective compute.
+4. **User Management and Password Reset**
+   - **User Maintenance**: All user maintenance, including creation, deletion, and role assignment, will be handled directly within Google Cloud Platform’s Identity Platform using either the Firebase Console, Google Cloud Console, or Identity Platform Admin SDK. No dedicated interface for user management is required at this point.
+   - **Password Reset**: Password resets will be managed directly through Identity Platform, with administrators responsible for initiating resets:
+      - Users are instructed to contact an administrator for password reset requests.
+      - Administrators can initiate password reset emails for users directly from the console.
+5. **Firestore**: Stores user metadata such as `customer_id`, roles, and permissions, enabling easy lookup for access control and auditing.
    - **Local Emulation for Testing**: Use the **Firebase Local Emulator Suite** to test Firestore interactions, Cloud Functions, and Authentication locally, providing a safe and controlled environment for development and testing.
-4. **Cloud Logging & Monitoring**: Provides real-time logging and metrics to track usage patterns, monitor security, and detect anomalies. Logging configurations will vary by environment with DEV, UAT and PRD each having specific log retention and detail levels to match operational needs.
-5. **Terraform (IaC)**: Manages the setup of DEV, UAT, and PRD environments using **separate GCP projects for each environment**, ensuring isolation, simplifying IAM management, and enhancing security. Infrastructure is defined using IaC scripts for automation.
+6. **Cloud Logging & Monitoring**: Provides real-time logging and metrics to track usage patterns, monitor security, and detect anomalies. Logging configurations will vary by environment with DEV, UAT and PRD each having specific log retention and detail levels to match operational needs.
+7. **Terraform (IaC)**: Manages the setup of DEV, UAT, and PRD environments using **separate GCP projects for each environment**, ensuring isolation, simplifying IAM management, and enhancing security. Infrastructure is defined using IaC scripts for automation.
    - **Environment Isolation**: Use Terraform scripts to automate the creation and management of separate GCP projects for each environment (DEV, UAT, PRD), enhancing security and simplifying IAM management.
-6. **Authentication SDK**: A software development kit that provides authentication functionalities, allowing applications to securely interact with the Auth Service APIs. The SDK handles communication with the Auth Service, token management, and ensures consistent security practices across all modules in the StudioFlow application.
-7. **CI/CD Integration**: Incorporate Continuous Integration and Continuous Deployment pipelines using tools like **Cloud Build**, **GitHub Actions**, or **GitLab CI/CD** to automate testing, linting, and deployments, ensuring consistent and reliable releases.
+8. **Authentication SDK**: A software development kit that provides authentication functionalities, allowing applications to securely interact with the Auth Service APIs. The SDK handles communication with the Auth Service, token management, and ensures consistent security practices across all modules in the StudioFlow application.
+9. **CI/CD Integration**: Incorporate Continuous Integration and Continuous Deployment pipelines using tools like **Cloud Build**, **GitHub Actions**, or **GitLab CI/CD** to automate testing, linting, and deployments, ensuring consistent and reliable releases.
+10. **Global Error Handling and Exception Management**
+    1. **Centralized Error Logging**: 
+       - Capture and log errors across the Auth Service and SDK using Google Cloud Logging for server-side errors and a client-side logging mechanism for SDK errors.
+    2. **Global Error Handling in the Auth Service**:
+       - Implement interceptors in Cloud Functions and return standardized error responses with appropriate HTTP status codes.
+    3. **Error Handling in the SDK**:
+       - Implement a global error handler, retry logic for transient errors, and provide user-friendly error messages.
+    4. **Security and Privacy Considerations**:
+       - Mask sensitive data in logs and user-facing error messages to maintain security and privacy.
 
 ### **Key Architecture Aspects**
 
@@ -51,36 +74,84 @@ The JWTs issued by the Auth Service will include both standard and custom claims
 
 - **JWT Payload Structure**:
 
-  ```json
-  {
-    "iss": "https://auth.studioflow.com",
-    "sub": "user_id_value",
-    "aud": "studioflow_clients",
-    "exp": 1625247600,
-    "iat": 1625244000,
-    "customer_id": "customer_id_value",
-    "user_id": "user_id_value",
-    "roles": ["admin", "editor"]
-  }
-  ```
+  - **For Customer User**:
+    ```json
+    {
+      "iss": "https://auth.studioflow.com",
+      "sub": "user_id_value",
+      "aud": "studioflow_clients",
+      "exp": 1625247600,
+      "iat": 1625244000,
+      "customer_id": "customer_id_value",
+      "roles": ["customer_user"]
+    }
+    ```
+  - **For Studio Admin**:
+    ```json
+    {
+      "iss": "https://auth.studioflow.com",
+      "sub": "user_id_value",
+      "aud": "studioflow_clients",
+      "exp": 1625247600,
+      "iat": 1625244000,
+      "roles": ["studio_admin"]
+    }
+    ```
 
 - **Claims Explanation**:
 
   - `iss` (Issuer): The issuing authority (`https://auth.studioflow.com`).
-  - `sub` (Subject): The user's unique identifier (`user_id`).
+  - `sub` (Subject): The user's unique identifier (user_id).
   - `aud` (Audience): Intended recipients (`studioflow_clients`).
   - `exp` (Expiration Time): Token expiration timestamp (in Unix epoch time).
   - `iat` (Issued At): Token issuance timestamp.
   - `customer_id`: Custom claim representing the user's associated customer.
-  - `user_id`: Redundant to `sub`, included for clarity.
   - `roles`: Array of roles assigned to the user.
 
-## **API Contracts**
 
-APIs allow other modules to authenticate users, retrieve JWTs, and enforce access control by `customer_id`.
+## **Access Control and Authorization**
+
+### **Overview**
+The Access Control Logic enforces permissions and data access restrictions based on user roles (`studio_admin`, `customer_user`).
+
+### **Role-Based Access Control (RBAC)**
+
+#### **Roles and Permissions**
+- **`studio_admin`**
+  - **Description**: Ful access to all functions in the application.
+
+- **`customer_user`**
+  - **Description**: Users associated with a specific customer.
+  - **Access Rights**:
+    - Access restricted to data associated with their `customer_id`.
+    - Cannot access administrative functions or data from other customers.
+
+
+### **User Creation and Management**
+
+- **Studio Admin User Creation**:
+  - `customer_id` should be omitted or set to `null`.
+  - Roles should include `studio_admin`.
+
+- **Customer User Creation**:
+  - `customer_id` is required.
+  - Roles should include `customer_user`.
+
+- **Validation Rules**:
+  - Enforce that `customer_user` roles cannot be assigned without a `customer_id`.
+  - Prevent `studio_admin` users from being assigned a `customer_id`.
+
+### **Edge Cases and Security Considerations**
+- **Missing `customer_id` for `customer_user`**:
+  - Deny access and return an error indicating that the user profile is misconfigured.
+
+---
+
+
+## **API Contracts**
+APIs allow other modules to authenticate users, retrieve JWTs, and enforce access control by `customer_id`. All time values, including expires_in, are expressed in seconds.
 
 ### **Standard Error Response Format**
-
 All API endpoints will return errors in the following standardized format:
 
 - **Error Response**:
@@ -129,49 +200,55 @@ The following HTTP status codes and corresponding error codes are used across al
 **Note**: All error responses will include the appropriate HTTP status code and adhere to the standard error response format defined above.
 
 ### **Transmission and Storage of Tokens**
+- **
 
-- **Token Transmission**:
-
+Token Transmission**:
   - **Access Token**:
-
-    - Returned in the response body under the key `token`.
+    - Transmitted in the response header as `Authorization: Bearer <access_token>`. This aligns with security best practices and ensures that the token is directly accessible for authorizing requests without being exposed in the response body.
 
   - **Refresh Token**:
-
-    - Returned in the response body under the key `refresh_token`.
+    - Transmitted and stored in a secure, HTTP-only cookie with the attribute `SameSite=Strict`, making it inaccessible to JavaScript. This storage method protects against cross-site scripting (XSS) and ensures that the refresh token is not exposed to unauthorized access on the client side.
 
 - **Example Success Response**:
-
-  ```json
-  {
-    "token": "access_token_value",
-    "refresh_token": "refresh_token_value",
-    "expires_in": 900
-  }
-  ```
+  - Headers:
+    ```http
+    Authorization: Bearer <access_token>
+    Set-Cookie: refresh_token=<refresh_token_value>; HttpOnly; Secure; SameSite=Strict
+    ```
+  - JSON Response Body:
+    ```json
+    {
+      "expires_in": 3600
+    }
+    ```
 
 - **Client-Side Storage**:
-
   - **Access Token**:
-
-    - Store securely in memory or secure storage mechanisms.
+    - Store securely in memory on the client side to avoid persistence and reduce exposure. Access tokens should not be stored in local storage or cookies.
 
   - **Refresh Token**:
-
-    - Store in secure HTTP-only cookies to prevent XSS attacks.
+    - Stored in a secure HTTP-only cookie, preventing direct JavaScript access and reducing risk from XSS attacks. CSRF protections (e.g., SameSite cookies) further secure the refresh token’s storage.
 
   - **Security Considerations**:
     - **Password Policies**:
       - **Minimum Length**: 8 characters.
       - **Complexity Requirements**:
         - Must include at least one uppercase letter, one lowercase letter, one numeral, and one special character (e.g., `!@#$%^&*`).
-  
     - Avoid storing tokens in local storage or other insecure locations.
+    - Implement CSRF protections using secure HTTP-only cookies for the refresh token.
 
-    - Implement measures to protect against CSRF attacks when using cookies.
+### **Refresh Token Format and Validation Process**
+
+- **Format**: 
+  - Refresh tokens are opaque tokens, represented as securely generated random strings. They are not JWTs and do not contain user claims. 
+
+- **Validation Process**:
+  - **Revocation Check**: Each time a refresh token is used, the Auth Service checks Firestore for a revocation entry tied to the token ID. If found, the token is invalidated, and the refresh request is denied.
+  - **Expiration Check**: Refresh tokens have a maximum lifetime of 14 days. During each refresh request, the Auth Service checks the token’s creation timestamp to ensure it is within this period.
+  - **Rotation and Invalidated Tokens**: Upon successful refresh, a new refresh token is generated and stored in a secure, HTTP-only cookie. The old token is marked as invalid in Firestore, ensuring that only the latest token is usable.
+
 
 ### **1. POST /auth/login**
-
 - **Description**: Authenticates a user and returns a JWTs.
 - **Request**:
   - Body: `{ "username": "string", "password": "string" }`
@@ -180,8 +257,9 @@ The following HTTP status codes and corresponding error codes are used across al
 
     ```json
     {
-      "token": "JWT",
-      "expires_in": "3600"
+      "token": "access_token_value",
+      "refresh_token": "refresh_token_value",
+      "expires_in": 3600
     }
     ```
 
@@ -192,7 +270,6 @@ The following HTTP status codes and corresponding error codes are used across al
       "error": {
         "code": "INVALID_CREDENTIALS",
         "message": "The username or password is incorrect.",
-        "details": ""
       }
     }
     ```
@@ -221,7 +298,7 @@ The following HTTP status codes and corresponding error codes are used across al
       - **Usage**: Used for authenticating API requests.
       - **Renewal**: Must be refreshed using a valid refresh token upon expiration.
     - **Refresh Token**:
-      - **Expiration Time**: 14 days.
+      - **Expiration Time**: 1209600 seconds (14 days).
       - **Usage**: Used to obtain new access tokens without re-authenticating.
       - **Rotation**: Refresh tokens are rotated upon each use. A new refresh token is issued and the old one invalidated.
       - **Revocation**: Refresh tokens can be revoked if suspicious activity is detected.
@@ -239,11 +316,6 @@ The following HTTP status codes and corresponding error codes are used across al
 - **Session Management**:
   - **Token Issuance**:
     - Upon successful login, the server issues both an access token and a refresh token.
-  - **Secure Storage**:
-    - Both tokens should be stored securely using mechanisms like secure HTTP-only cookies to prevent unauthorized access.
-  - **Session Expiry Notification**:
-    - Notify users **5 minutes** before the access token expires to prompt them for renewal.
-    - The application can automatically attempt to refresh the access token using the refresh token without user intervention.
   - **User Experience**:
     - If the refresh token has expired or is invalid, prompt the user to re-authenticate to obtain new tokens.
     - 
@@ -266,7 +338,7 @@ The following HTTP status codes and corresponding error codes are used across al
     {
       "token": "access_token_value",
       "refresh_token": "refresh_token_value",
-      "expires_in": 900
+      "expires_in": 3600
     }
     ```
 
@@ -277,7 +349,6 @@ The following HTTP status codes and corresponding error codes are used across al
       "error": {
         "code": "INVALID_CREDENTIALS",
         "message": "The username or password is incorrect.",
-        "details": ""
       }
     }
     ```
@@ -320,7 +391,6 @@ The following HTTP status codes and corresponding error codes are used across al
       "error": {
         "code": "TOKEN_EXPIRED",
         "message": "The token has expired.",
-        "details": ""
       }
     }
     ```
@@ -361,8 +431,9 @@ The following HTTP status codes and corresponding error codes are used across al
 
     ```json
     {
-      "token": "JWT",
-      "expires_in": "3600"
+      "token": "access_token_value",
+      "refresh_token": "refresh_token_value",
+      "expires_in": 3600
     }
     ```
 
@@ -372,8 +443,7 @@ The following HTTP status codes and corresponding error codes are used across al
     {
       "error": {
         "code": "INVALID_REFRESH_TOKEN",
-        "message": "The refresh token is invalid or expired.",
-        "details": ""
+        "message": "The refresh token is invalid or expired.",      
       }
     }
     ```
@@ -410,71 +480,6 @@ The following HTTP status codes and corresponding error codes are used across al
 ### **Additional Endpoints**
 
 **Note**: Account registration and role assignment are only possible by an administrator. Users cannot register themselves or manage their profiles through public endpoints. As such, there are no endpoints provided for user registration or profile management.
-
-#### **POST /auth/password-reset**
-
-- **Description**: Initiates password reset by sending a reset link to the user's email.
-- **Request**:
-  - Body: `{ "email": "string" }`
-- **Response**:
-  - Success:
-
-    ```json
-    {
-      "message": "Password reset link sent if email is registered."
-    }
-    ```
-
-  - Error:
-
-    ```json
-    {
-      "error": {
-        "code": "INVALID_REQUEST",
-        "message": "Invalid email format.",
-        "details": ""
-      }
-    }
-    ```
-
-- **Error Codes**:
-  - `INVALID_REQUEST`: Invalid email format.
-  - `RATE_LIMIT_EXCEEDED`: Rate limit exceeded.
-  - `INTERNAL_SERVER_ERROR`: Internal server error.
-  
-- **Reset Token Expiration**: Password reset tokens will expire strictly within 15-30 minutes after issuance. Users must complete the reset within this timeframe; otherwise, they will need to request a new reset link.
-
-#### **PUT /auth/password-reset/confirm**
-
-- **Description**: Resets the user's password using the token from the reset link.
-- **Request**:
-  - Body: `{ "reset_token": "string", "new_password": "string" }`
-- **Response**:
-  - Success:
-
-    ```json
-    {
-      "message": "Password reset successful."
-    }
-    ```
-
-  - Error:
-
-    ```json
-    {
-      "error": {
-        "code": "INVALID_RESET_TOKEN",
-        "message": "Invalid or expired reset token.",
-        "details": ""
-      }
-    }
-    ```
-
-- **Error Codes**:
-  - `INVALID_REQUEST`: Invalid input.
-  - `INVALID_RESET_TOKEN`: Invalid or expired reset token.
-  - `RATE_LIMIT_EXCEEDED`: Rate limit exceeded.
-  - `INTERNAL_SERVER_ERROR`: Internal server error.
 
 ---
 
@@ -615,12 +620,6 @@ To develop efficiently, use **Visual Studio Code (VS Code)** and leverage its in
     - Extracts `customer_id` and other claims.
   - **`refreshToken`**:
     - Issues new JWTs when old tokens expire.
-  - **`passwordReset`**:
-    - Handles password reset requests.
-    - Sends password reset emails.
-  - **`passwordResetConfirm`**:
-    - Confirms password reset with new credentials.
-    - Updates the user's password in Identity Platform.
 
 #### **4.2 Set Permissions**
 
@@ -727,6 +726,8 @@ To develop efficiently, use **Visual Studio Code (VS Code)** and leverage its in
   - Store all sensitive information securely.
   - Access secrets in a secure and controlled manner.
   
+- **Set up Multi-Region Deployment and Monitoring**: Configure Identity Platform, Firestore, and Cloud Functions for multi-region deployment and enable Cloud Monitoring alerts for latency, failures, and backup status.
+  
 ---
 
 ### **Step 6: Development Workflow**
@@ -751,12 +752,26 @@ To develop efficiently, use **Visual Studio Code (VS Code)** and leverage its in
 - **Language Support**:
   - Develop the SDK in **JavaScript**, targeting React and other JavaScript applications.
 - **Core Functionality**:
-  - Implement methods for:
-    - `login()`
-    - `logout()`
-    - `refreshToken()`
-    - `passwordReset()`
-    - Token management and storage.
+   - Implement methods for:
+      - `login()`
+      - `logout()`
+      - `refreshToken()`
+      - `passwordReset()`
+      - Token management and storage.
+
+- **Token Management and Storage in the Authentication SDK**:
+   - **Access Token Storage**:
+      - Stored in memory only, never in persistent storage (e.g., local storage or cookies).
+      - Automatically cleared upon logout or session expiry to minimize exposure.
+
+   - **Refresh Token Storage**:
+      - Stored in a secure, HTTP-only, `SameSite=Strict` cookie to prevent unauthorized access and CSRF attacks.
+      - The cookie is set with the `Secure` attribute to ensure it is only sent over HTTPS connections.
+
+   - **Automatic Token Refresh and Rotation**:
+      - The SDK checks the expiration time of the access token and automatically attempts to refresh it a few minutes before expiry, provided the refresh token is valid.
+      - On each refresh, a new refresh token is issued, replacing the old one, which is securely disposed of.
+      - If a refresh request is denied (indicating token revocation or expiry), the SDK will log out the user and prompt for re-authentication.
 - **Token Expiration Handling**: 
   - The SDK will handle token expiration gracefully by attempting to refresh the token automatically and retrying the API call once before failing. If the refresh fails or the token is still invalid, the SDK will notify the application to prompt a re-login.
 - **Security**:
@@ -940,12 +955,6 @@ To develop efficiently, use **Visual Studio Code (VS Code)** and leverage its in
   - **Invalid Refresh Token**:
     - Test with expired or revoked refresh tokens.
 
-- **Password Reset Tests**:
-  - **Request Password Reset**:
-    - Ensure that a password reset email is sent when requested.
-  - **Confirm Password Reset**:
-    - Validate that passwords can be reset using a valid reset token.
-
 - **Rate Limiting Tests**:
   - **Exceeding Limits**:
     - Confirm that exceeding the rate limit returns a `429 Too Many Requests` error.
@@ -1050,6 +1059,17 @@ project-root/
 
 ---
 
+## **Failover, Redundancy, and Disaster Recovery**
+
+The StudioFlow Auth Service leverages Google Cloud Platform’s built-in capabilities to ensure high availability, redundancy, and data integrity. Key components include:
+
+1. **Multi-Region Deployment**: Identity Platform and Firestore are deployed in multi-region configurations to prevent single-point failures and ensure service continuity.
+2. **Load Balancing and Auto-Scaling**: Google Cloud Load Balancer distributes traffic across regions with automatic failover, while Cloud Functions auto-scale to handle demand, minimizing downtime during traffic spikes.
+3. **Scheduled Backups**: Firestore backups are configured to run on a scheduled basis, stored in a separate region. Identity Platform user metadata is mirrored to Firestore to support disaster recovery.
+4. **Monitoring and Alerts**: Real-time health checks and alerting through Cloud Monitoring allow proactive response to service issues. Alerts are configured for latency, failures, and storage access problems, helping maintain service availability.
+
+---
+
 ## **Cost Estimation Approach Using GCP Pricing Calculator**
 
 - **Identify Usage Metrics**:
@@ -1079,7 +1099,7 @@ project-root/
 
 ## **Interaction Diagram**
 
-Below is a Mermaid diagram illustrating the interaction between the Auth Service, the SDK, and a module called SF-ModuleX, including additional scenarios like account lockout and password reset.
+Below is a Mermaid diagram illustrating the interaction between the Auth Service, the SDK, and a module called SF-ModuleX.
 
 ```mermaid
 sequenceDiagram
@@ -1124,24 +1144,6 @@ sequenceDiagram
     AuthService -->> AuthSDK: Error Response (ACCOUNT_LOCKED)
     AuthSDK -->> SF-ModuleX: Account Locked Message
     SF-ModuleX ->> User: Account Locked Notification
-
-    Note over User,AuthService: Password Reset Flow
-    User ->> SF-ModuleX: Requests Password Reset
-    SF-ModuleX ->> AuthSDK: Call requestPasswordReset(email)
-    AuthSDK ->> AuthService: POST /auth/password-reset
-    AuthService ->> AuthService: Generate Reset Token and Send Email
-    AuthService -->> AuthSDK: 200 OK (message)
-    AuthSDK -->> SF-ModuleX: Confirmation Message
-    SF-ModuleX ->> User: Password Reset Email Sent
-
-    User ->> Email: Receives Password Reset Link
-    User ->> SF-ModuleX: Clicks Reset Link and Enters New Password
-    SF-ModuleX ->> AuthSDK: Call confirmPasswordReset(resetToken, newPassword)
-    AuthSDK ->> AuthService: PUT /auth/password-reset/confirm
-    AuthService ->> AuthService: Validate Reset Token and Update Password
-    AuthService -->> AuthSDK: 200 OK (message)
-    AuthSDK -->> SF-ModuleX: Password Reset Successful
-    SF-ModuleX ->> User: Password Reset Successful Message
 
     Note over User,AuthService: Token Expiration and Refresh
     User ->> SF-ModuleX: Requests Protected Resource
