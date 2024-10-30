@@ -6,6 +6,12 @@
 
 The StudioFlow Auth Service provides centralized authentication and authorization for all modules in the StudioFlow application. Using a microservices architecture on Google Cloud Platform (GCP), this service authenticates users, associates them with a `customer_id`, issues JWTs, and enforces access control across modules by restricting data access to the user's specific `customer_id`.
 
+### **Terminology**
+
+- **Access Token**: A token used to authenticate and authorize API requests. In this specification, access tokens are implemented as JWTs.
+- **JWT (JSON Web Token)**: A compact, URL-safe means of representing claims.
+- **Refresh Tokens**: Implemented as opaque strings.
+
 ### **Objectives**
 
 1. **Scalable, Secure Authentication**: Provide a secure authentication system for users to access the StudioFlow application.
@@ -66,7 +72,7 @@ The StudioFlow Auth Service leverages Google Cloud Platform (GCP) services to pr
 
 ### **JWT Token Structure and Claims**
 
-The JWTs issued by the Auth Service will include both standard and custom claims to provide necessary user information.
+The JWTs issued by the Identity Platform will include both standard and custom claims to provide necessary user information.
 
 - **Signing Algorithm**: `RS256` (RSA Signature with SHA-256)
 
@@ -200,42 +206,39 @@ The following HTTP status codes and corresponding error codes are used across al
 **Note**: All error responses will include the appropriate HTTP status code and adhere to the standard error response format defined above.
 
 ### **Transmission and Storage of Tokens**
-- **
 
-Token Transmission**:
+- **Token Transmission**:
   - **Access Token**:
-    - Transmitted in the response header as `Authorization: Bearer <access_token>`. This aligns with security best practices and ensures that the token is directly accessible for authorizing requests without being exposed in the response body.
-
+    - Returned in the **response body** as `"access_token"` for clarity and ease of access.
   - **Refresh Token**:
-    - Transmitted and stored in a secure, HTTP-only cookie with the attribute `SameSite=Strict`, making it inaccessible to JavaScript. This storage method protects against cross-site scripting (XSS) and ensures that the refresh token is not exposed to unauthorized access on the client side.
+    - Transmitted and stored in a **secure, HTTP-only cookie** with `SameSite=Strict` attribute to prevent JavaScript access and protect against XSS and CSRF attacks.
+
+  *Note: Storing the refresh token in an HTTP-only cookie enhances security by preventing client-side scripts from accessing it.*
 
 - **Example Success Response**:
-  - Headers:
+  - **Response Headers**:
     ```http
-    Authorization: Bearer <access_token>
     Set-Cookie: refresh_token=<refresh_token_value>; HttpOnly; Secure; SameSite=Strict
     ```
-  - JSON Response Body:
+  - **JSON Response Body**:
     ```json
     {
+      "access_token": "<access_token_value>",
       "expires_in": 3600
     }
     ```
+  *Note: The access token is returned in the response body, while the refresh token is securely stored via an HTTP-only cookie.*
 
 - **Client-Side Storage**:
   - **Access Token**:
-    - Store securely in memory on the client side to avoid persistence and reduce exposure. Access tokens should not be stored in local storage or cookies.
-
+    - Store securely in memory on the client side and avoid persistence to reduce exposure.
   - **Refresh Token**:
-    - Stored in a secure HTTP-only cookie, preventing direct JavaScript access and reducing risk from XSS attacks. CSRF protections (e.g., SameSite cookies) further secure the refresh token’s storage.
+    - Managed by the browser via the HTTP-only cookie and not accessible through JavaScript.
+  *Note: Storing access tokens in memory reduces XSS risks, and managing refresh tokens via cookies prevents CSRF attacks.*
 
-  - **Security Considerations**:
-    - **Password Policies**:
-      - **Minimum Length**: 8 characters.
-      - **Complexity Requirements**:
-        - Must include at least one uppercase letter, one lowercase letter, one numeral, and one special character (e.g., `!@#$%^&*`).
-    - Avoid storing tokens in local storage or other insecure locations.
-    - Implement CSRF protections using secure HTTP-only cookies for the refresh token.
+- **Security Considerations**:
+  - Avoid storing tokens in local storage or other insecure locations.
+  - Implement CSRF protections using secure HTTP-only cookies for the refresh token.
 
 ### **Refresh Token Format and Validation Process**
 
@@ -254,17 +257,20 @@ Token Transmission**:
   - Body: `{ "username": "string", "password": "string" }`
 - **Response**:
   - Success:
-
-    ```json
-    {
-      "token": "access_token_value",
-      "refresh_token": "refresh_token_value",
-      "expires_in": 3600
-    }
-    ```
+    - **Response Headers**:
+      ```http
+      Set-Cookie: refresh_token=<refresh_token_value>; HttpOnly; Secure; SameSite=Strict
+      ```
+    - **JSON Response Body**:
+      ```json
+      {
+        "access_token": "<access_token_value>",
+        "expires_in": 3600
+      }
+      ```
+    *Note: The access token is returned in the body for client use, and the refresh token is securely stored in an HTTP-only cookie.*
 
   - Error:
-
     ```json
     {
       "error": {
@@ -305,24 +311,25 @@ Token Transmission**:
     - **Token Revocation Mechanism**:
       - The Auth Service maintains a blacklist of revoked tokens in Firestore.
       - Tokens are checked against the blacklist during authentication and refresh operations.
-- **Secure Storage of Tokens**: 
-  - All JWTs and refresh tokens will be stored using secure HTTP-only cookies on the client side. Passwords should not be stored on the client side.
+- **Secure Storage of Tokens**:
+  - **Access Token**: Stored securely in memory on the client side to minimize exposure.
+  - **Refresh Token**: Stored in a secure, HTTP-only cookie to prevent access via JavaScript.
 - **Edge Cases**:
   - **Account Lockout**:
     - After `5` failed login attempts, lock the user account for `15 minutes`.
     - The account will automatically unlock after the lockout period.
     - **User Notification**: Notify the user via email about the lockout and when they can attempt to log in again.
-    - **Immediate Unlock Option**: Users can reset their password to unlock the account immediately.
 - **Session Management**:
   - **Token Issuance**:
     - Upon successful login, the server issues both an access token and a refresh token.
   - **User Experience**:
     - If the refresh token has expired or is invalid, prompt the user to re-authenticate to obtain new tokens.
     - 
-- **Usage Examples**
+- **Usage Examples**:
+
   - **Request Example**:
 
-    ```bash
+    ```http
     POST https://auth.studioflow.com/auth/login
     Content-Type: application/json
 
@@ -334,22 +341,18 @@ Token Transmission**:
 
   - **Response Example (Success)**:
 
-    ```json
-    {
-      "token": "access_token_value",
-      "refresh_token": "refresh_token_value",
-      "expires_in": 3600
-    }
+    **Response Headers**:
+
+    ```http
+    Set-Cookie: refresh_token=<refresh_token_value>; HttpOnly; Secure; SameSite=Strict
     ```
 
-  - **Response Example (Error)**:
+    **Response Body**:
 
     ```json
     {
-      "error": {
-        "code": "INVALID_CREDENTIALS",
-        "message": "The username or password is incorrect.",
-      }
+      "access_token": "<access_token_value>",
+      "expires_in": 3600
     }
     ```
 
@@ -361,13 +364,16 @@ Token Transmission**:
       password: 'password123!'
     })
     .then(response => {
-      const { token, refresh_token, expires_in } = response.data;
-      // Store tokens securely
+      const { access_token, expires_in } = response.data;
+      // Store access_token securely in memory
+      // Refresh token is managed via HTTP-only cookie
     })
     .catch(error => {
       // Handle error
     });
     ```
+
+    *Note: The access token is stored in memory, and the refresh token is handled securely by the browser.*
 
 ### **2. GET /auth/validate**
 
@@ -425,17 +431,23 @@ Token Transmission**:
 
 - **Description**: Refreshes a JWTs.
 - **Request**:
-  - Header: `Authorization: Bearer <Refresh Token>`
-- **Response**:
-  - Success:
+  - **No request body needed**; the refresh token is sent automatically via the HTTP-only cookie.
+  *Note: Using an HTTP-only cookie for the refresh token enhances security by preventing JavaScript access.*
 
-    ```json
-    {
-      "token": "access_token_value",
-      "refresh_token": "refresh_token_value",
-      "expires_in": 3600
-    }
-    ```
+- **Response**:
+  - **Success**:
+    - **Response Headers**:
+      ```http
+      Set-Cookie: refresh_token=<new_refresh_token_value>; HttpOnly; Secure; SameSite=Strict
+      ```
+    - **JSON Response Body**:
+      ```json
+      {
+        "access_token": "<new_access_token_value>",
+        "expires_in": 3600
+      }
+      ```
+    *Note: A new access token is returned, and the refresh token is rotated and securely stored.*
 
   - Error:
 
@@ -461,12 +473,13 @@ Token Transmission**:
   - `INTERNAL_SERVER_ERROR`: Unexpected issue on the server side.
 - **Rate Limiting**:
   - Implement rate limiting to prevent abuse.
-  - **Maximum Requests**: 100 requests per minute per **user account**.
+  - **Maximum Requests**: 5 requests per minute per **user account**.
 - **Security Best Practices**:
   - Enforce HTTPS for all endpoints.
   - Use short-lived tokens and manage signing keys using Google Cloud KMS.
-- **Secure Storage of Tokens**: 
-  - All JWTs and refresh tokens will be stored using secure HTTP-only cookies on the client side.
+- **Secure Storage of Tokens**:
+  - **Access Token**: Stored securely in memory on the client side.
+  - **Refresh Token**: Managed via the secure HTTP-only cookie.
 - **Edge Cases**:
   - **Expired or Invalid Refresh Token**:
     - Return `INVALID_REFRESH_TOKEN` error and prompt the user to log in again.
@@ -756,7 +769,6 @@ To develop efficiently, use **Visual Studio Code (VS Code)** and leverage its in
       - `login()`
       - `logout()`
       - `refreshToken()`
-      - `passwordReset()`
       - Token management and storage.
 
 - **Token Management and Storage in the Authentication SDK**:
@@ -772,6 +784,7 @@ To develop efficiently, use **Visual Studio Code (VS Code)** and leverage its in
       - The SDK checks the expiration time of the access token and automatically attempts to refresh it a few minutes before expiry, provided the refresh token is valid.
       - On each refresh, a new refresh token is issued, replacing the old one, which is securely disposed of.
       - If a refresh request is denied (indicating token revocation or expiry), the SDK will log out the user and prompt for re-authentication.
+  
 - **Token Expiration Handling**: 
   - The SDK will handle token expiration gracefully by attempting to refresh the token automatically and retrying the API call once before failing. If the refresh fails or the token is still invalid, the SDK will notify the application to prompt a re-login.
 - **Security**:
@@ -817,10 +830,12 @@ To develop efficiently, use **Visual Studio Code (VS Code)** and leverage its in
 
 - **Usage Example**
   - **Login**:
+
     ```javascript
     auth.login('user@example.com', 'password123!')
       .then(() => {
-        // Login successful
+        // Access token is stored securely in memory
+        // Refresh token is managed via HTTP-only cookie
       })
       .catch(error => {
         // Handle error
@@ -828,10 +843,12 @@ To develop efficiently, use **Visual Studio Code (VS Code)** and leverage its in
     ```
 
   - **Access Protected Resources**:
+
     ```javascript
-    auth.getToken()
+    auth.getAccessToken()
       .then(token => {
-        // Use token to access protected APIs
+        // Use token in Authorization header for API requests
+        // Authorization: Bearer <access_token>
       })
       .catch(error => {
         // Handle error
@@ -839,10 +856,15 @@ To develop efficiently, use **Visual Studio Code (VS Code)** and leverage its in
     ```
 
   - **Logout**:
+
     ```javascript
     auth.logout()
       .then(() => {
-        // Logout successful
+        // Access token cleared from memory
+        // Server should clear the refresh token cookie
+      })
+      .catch(error => {
+        // Handle error
       });
     ```
 ---
